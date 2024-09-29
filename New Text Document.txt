@@ -1,0 +1,172 @@
+from flask import Flask, request, render_template, send_file
+from werkzeug.utils import secure_filename
+import pandas as pd
+from docx import Document
+import re
+import os
+
+app = Flask(__name__)
+
+def extract_information(doc_text):
+    data = {
+        'general': {
+            "Case Code": [],
+            "Homepage Vignette": [],
+            "Individual Page Vignette": [],
+            "Name": [],
+            "Date of Birth": [],
+            "Location": [],
+            "Personality": [],
+            "Presenting Complaint": [],
+            "Presenting_Complaint_Quote": [],
+            "Symptoms": [],
+            "Symptoms_Quote": [],
+            "History of Presenting Complaint": [],
+            "History_of_Presenting_Complaint_Quote": [],
+            "Systemic Symptoms": [],
+            "Systemic_Symptoms_Quote": [],
+            "Obstetric History": [],
+            "Obstetric_History_Quote": [],
+            "Gynaecology History": [],
+            "Gynaecology_History_Quote": [],
+            "Past_Medical History": [],
+            "Past_Medical_History_Quote": [],
+            "Drug History": [],
+            "Drug_History_Quote": [],
+            "Allergies": [],
+            "Allergies_Quote": [],
+            "Family History": [],
+            "Family_History_Quote": [],
+            "Social History": [],
+            "Social_History_Quote": [],
+            "Ideas, Concerns, and Expectations": [],
+            "Ideas_Concerns_and_Expectations_Quote": [],
+            "Observations": [],
+            "Physical Examination": [],
+            "Diagnostic Tests": [],
+            "Condition": [],
+            "Patient Questions": [],
+            "Examiner Questions": [],
+            "Treatment": [],
+            "Monitoring": [],
+            "Prognosis": [],
+            "Differential Diagnoses": [],
+            "Filter_Specialties": [],
+            "Filter_Presenting_Complaints": [],
+            "Filter_Condition": [],
+            "Filter_Location": [],
+            "Filter_Scenario": [],
+            "Case created by": [],
+            "Reviewed by 1": [],
+            "Reviewed by 2": [],
+            # "RegisteredUser?": [],
+            # "Media?": [],
+            # "Location_of_Media": [],
+        }
+    }
+
+#TODO: filter_location fix
+    patterns = {
+        'Case_Code': r'Case\s*Code\s*:\s*(\w+_\d+_[A-Za-z]+)\s*(?=\nHomepage\s*Vignette\s*:\s*|\Z)',
+        'Homepage Vignette': r'Homepage\s*Vignette\s*:\s*(.*?)(?=\nIndividual\s*Page\s*Vignette\s*:\s*|\Z)',
+        'Individual Page Vignette': r'Individual\s*Page\s*Vignette\s*:\s*((?:.|\n)*?)(?=\nPatient\s*Name\s*:\s*|\Z)',
+        'Name': r'Patient\s*Name\s*:\s*(.*?)(?=\nDate\s*of\s*Birth\s*:\s*|\Z)',
+        'Date of Birth': r'Date\s*of\s*Birth\s*:\s*(.*?)(?=\nLocation\s*:\s*|\Z)',
+        'Location': r'Location\s*:\s*(.*?)(?=\nPersonality\s*:\s*|\Z)',
+        'Personality': r'Personality\s*:\s*(.*?)(?=\nPresenting\s*Complaint\s*:\s*|\Z)',
+        'Presenting Complaint': r'Presenting\s*Complaint\s*:\s*(.*?)(?=\nPresenting_Complaint_Quote\s*:\s*|\Z)',
+        # 'Presenting_Complaint_Quote': r'Presenting_Complaint_Quote\s*:\s*"([^"]*?)"(?=\nSymptoms\s*:\s*|\Z)',
+        # 'Presenting_Complaint_Quote': r'Presenting_Complaint_Quote\s*:\s*"([\s\S]+?)"(?=\nSymptoms\s*:|\Z)', #Trying
+        'Presenting_Complaint_Quote': r'Presenting_Complaint_Quote\s*:\s*"([\s\S]+?)"(?=\n[A-Z]|\Z)',
+        'Symptoms': r'Symptoms\s*:\s*(.*?)(?=\nSymptoms_Quote\s*:\s*|\Z)',
+        'Symptoms_Quote': r'Symptoms_Quote\s*:\s*"([\s\S]*?)"\s*(?=History of Presenting Complaint\s*:|$)', #FIXED
+        'History of Presenting Complaint': r'History\s*of\s*Presenting\s*Complaint\s*:\s*(.*?)(?=\nHistory_of_Presenting_Complaint_Quote\s*:\s*|\Z)',
+        'History_of_Presenting_Complaint_Quote': r'History_of_Presenting_Complaint_Quote\s*:\s*"([^"]*?)"(?=\nSystemic\s*Symptoms\s*:\s*|\Z)',
+        'Systemic Symptoms': r'Systemic\s*Symptoms\s*:\s*(.*?)(?=\nSystemic_Symptoms_Quote\s*:\s*|\Z)',
+        'Systemic_Symptoms_Quote': r'Systemic_Symptoms_Quote\s*:\s*"([^"]*?)"(?=\nObstetric\s*History\s*:\s*|\Z)',
+        'Obstetric History': r'Obstetric\s*History\s*:\s*(.*?)(?=\nObstetric_History_Quote\s*:\s*|\Z)',
+        'Obstetric_History_Quote': r'Obstetric_History_Quote\s*:\s*"([^"]*?)"(?=\nGynaecology\s*History\s*:\s*|\Z)',
+        'Gynaecology History': r'Gynaecology\s*History\s*:\s*(.*?)(?=\nGynaecology_History_Quote\s*:\s*|\Z)',
+        'Gynaecology_History_Quote': r'Gynaecology_History_Quote:\s*"([^"]+)"',
+        'Past Medical History': r'Past Medical History:\s*([\s\S]+?)Past_Medical_History_Quote:',
+        'Past_Medical_History_Quote': r'Past_Medical_History_Quote:\s*"([^"]+)"',
+        'Drug History': r'Drug History:\s*([\s\S]+?)Drug_History_Quote:',
+        'Drug_History_Quote': r'Drug_History_Quote:\s*"([^"]+)"',
+        'Allergies': r'Allergies:\s*([\s\S]+?)Allergies_Quote:',
+        'Allergies_Quote': r'Allergies_Quote:\s*"([^"]+)"(?=\nFamily History:)',
+        'Family History': r'Family History:\s*([\s\S]+?)Family_History_Quote:',
+        'Family_History_Quote': r'Family_History_Quote:\s*"([^"]+)"',
+        'Social History': r'Social History:\s*([\s\S]+?)Social_History_Quote:',
+        'Social_History_Quote': r'Social_History_Quote:\s*"([^"]+)"',
+        'Ideas,Concerns, and Expectations': r'Ideas, Concerns, and Expectations:\s*([\s\S]+?)Ideas_Concerns_and_Expectations_Quote:',
+        'Ideas_Concerns_and_Expectations_Quote': r'Ideas_Concerns_and_Expectations_Quote:\s*"([^"]+)"',
+        'Observations': r'Observations:\s*([\s\S]+?)Physical Examination:',
+        'Physical Examination': r'Physical Examination:\s*([\s\S]+?)Diagnostic Tests:',
+        'Diagnostic Tests': r'Diagnostic Tests:\s*([\s\S]+?)Condition:',
+        'Condition': r'Condition:\s*([\s\S]+?)Patient Questions:',
+        'Patient Questions': r'Patient Questions:\s*([\s\S]+?)Examiner Questions:',
+        'Examiner Questions': r'Examiner Questions:\s*([\s\S]+?)Treatment:',
+        'Treatment': r'Treatment:\s*([\s\S]+?)Monitoring:',
+        'Monitoring': r'Monitoring:\s*([\s\S]+?)Prognosis:',
+        'Prognosis': r'Prognosis:\s*([\s\S]+?)Differential diagnoses:',
+        'Differential Diagnoses': r'Differential diagnoses:\s*([\s\S]+?)Filter_Specialties:',
+        'Filter_Specialties': r'Filter_Specialties:\s*([\s\S]+?)Filter_Presenting_Complaints:',
+        'Filter_Presenting_Complaints': r'Filter_Presenting_Complaints:\s*([\s\S]+?)Filter_Condition:',
+        'Filter_Condition': r'Filter_Condition:\s*([\s\S]+?)Filter_Location:',
+        'Filter_Location': r'Filter_Location:\s*([\s\S]+?)Filter_Scenario',
+        'Filter_Scenario': r'Filter_Scenario:\s*([\s\S]+?)Case created by:',
+        'Case created by': r'Case created by:\s*([\s\S]+?)Reviewed by 1:',
+        'Reviewed by 1': r'Reviewed by 1:\s*([\s\S]+?)Reviewed by 2:',
+        'Reviewed by 2': r'Reviewed by 2:\s*([\s\S]+?)(?=Case Code|$)'
+    }
+
+    cases = []
+    case_codes = re.findall(patterns['Case_Code'], doc_text, re.DOTALL)
+
+    for code in case_codes:
+        case_data = {'Case_Code': code}
+        for key, pattern in patterns.items():
+            if key == 'Case_Code':
+                continue
+            # Adjust pattern to search after the specific case code
+            adjusted_pattern = rf'{code}.*?{pattern}'
+            match = re.search(adjusted_pattern, doc_text, re.DOTALL)
+            if match:
+                case_data[key] = match.group(1).strip()
+            else:
+                case_data[key] = f"Not Found for {key}"  # Add debug info if not found
+        cases.append(case_data)
+
+        # Ensure all cases have the same fields
+    all_keys = set(key for case in cases for key in case.keys())
+    for case in cases:
+        for key in all_keys:
+            if key not in case:
+                case[key] = ''  # Add missing keys as empty strings
+
+    return cases
+
+
+@app.route('/', methods=['GET', 'POST'])
+def upload_file():
+    if request.method == 'POST':
+        file = request.files.get('file')
+        if file and file.filename.endswith('.docx'):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join('', filename)
+            file.save(filepath)
+            document = Document(filepath)
+            doc_text = '\n'.join([para.text for para in document.paragraphs])
+
+            cases = extract_information(doc_text)  # Updated function call
+            df = pd.DataFrame(cases)
+            excel_path = 'output.xlsx'
+            df.to_excel(excel_path, index=False)
+            return send_file(excel_path, as_attachment=True)
+        else:
+            return 'Invalid file format or no file provided'
+
+    return render_template('upload.html')
+
+if __name__ == '__main__':
+    app.run(debug=True)
